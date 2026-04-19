@@ -68,6 +68,13 @@ class PvZReader:
         sun = self.read_dword(two + 0x5560)
         return sun
 
+    def get_zombie_number(self):
+        one = self.read_dword(0x6A71AC)
+        two = self.read_dword(one + 0x160)
+        three = self.read_dword(two + 0x768)
+        zombie_number = three + 0xA0
+        return zombie_number
+
     def get_zombie_data(self, filter_x_max=800):
         if not self.h_proc:
             return []
@@ -82,7 +89,8 @@ class PvZReader:
 
             for i in range(50):
                 offset = i * self.RECORD_SIZE
-                sun, old_value, level_change, zombie_number = struct.unpack_from('<IIII', raw, offset)
+                _, old_value, level_change, _ = struct.unpack_from('<IIII', raw, offset)
+                sun = self.get_sunlight()
                 if old_value == 0:
                     continue
                 else:
@@ -94,7 +102,7 @@ class PvZReader:
                     head_hat = self.read_dword(old_value + 0x8)
                     zombie_x = self.read_float(old_value - 0x9C)
                     zombie_y = self.read_float(old_value - 0x98)
-                    current_zombie_numbers = self.read_dword(zombie_number)
+                    current_zombie_numbers = self.read_dword(self.get_zombie_number())
 
                     if current_hp == 0:
                         continue
@@ -128,7 +136,6 @@ class PvZReader:
 
 def main(reader):
     zombie_entries = reader.get_zombie_data()
-
     if not zombie_entries:
         print("未获取到僵尸数据")
         return
