@@ -1,7 +1,8 @@
 import pyautogui
 import Window_readering
 import time
-
+import keyboard
+import threading
 
 # 在现有全局变量后添加
 sunflower_planted_count = 0
@@ -157,7 +158,7 @@ def plant_sunflowers_logic():
 
     if sunflower_planted_count >= 5:
         sun_plant_ok = True
-        return
+        return False
 
     sun = reader.get_sunlight()
     if sun >= 50 and check_plant_CD('向日葵'):
@@ -168,7 +169,8 @@ def plant_sunflowers_logic():
                     sunflower_planted_count += 1
                     if sunflower_planted_count >= 5:
                         sun_plant_ok = True
-                    return
+                    return  True
+    return False
 
 
 def assess_zombie_threat(zombie_list):
@@ -179,10 +181,6 @@ def assess_zombie_threat(zombie_list):
     danger_alert = False
 
     for zombie in zombie_list:
-        # 僵尸距离阈值判断
-        if zombie['x'] < 800:  # 中等距离，开始预警
-            danger_rows.add(zombie['row'])
-
         if zombie['x'] < 700:  # 危险距离
             danger_alert = True
             danger_rows.add(zombie['row'])
@@ -200,38 +198,35 @@ def has_shooter_in_row(row):
 
 
 def defense_logic(danger_rows, danger_alert):
-    """防御决策逻辑"""
-    sun = reader.get_sunlight()
-
-    # 有危险僵尸时的优先级
+    """防御决策逻辑 """
     if danger_alert:
+        sun = reader.get_sunlight()
+        zombie_list = get_zombie_data()
+
         for row in danger_rows:
-            # 如果有向日葵CD，先尝试种植豌豆射手
-            if sun >= 100 and check_plant_CD('豌豆射手'):
-                # 只在第二列种植豌豆射手
-                if (row, 2) not in planted_grids:
+            if (row, 2) not in planted_grids:
+                if sun >= 100 and check_plant_CD('豌豆射手'):
                     if plant_at(row, 2, '豌豆射手'):
                         return True
+            else:
+                if has_shooter_in_row(row):
 
-            # 如果该行已经有射手，检查是否需要补充
-            if has_shooter_in_row(row):
-                # 统计该行僵尸数量
-                row_zombies = [z for z in get_zombie_data() if z['row'] == row]
-                if (len(row_zombies) > 2
-                        and sun >= 100
-                        and check_plant_CD('豌豆射手')
-                        and not check_plant_CD("双发射手")):
-                    # 在射手前种植豌豆射手
-                    if (row, 3) not in planted_grids:
-                        if plant_at(row, 3, '豌豆射手'):
-                            return True
+                    row_zombies = [z for z in zombie_list if z['row'] == row]
 
+                    if (len(row_zombies) > 2
+                            and sun >= 100
+                            and check_plant_CD('豌豆射手')):
+
+                        if (row, 3) not in planted_grids:
+                            if plant_at(row, 3, '豌豆射手'):
+                                return True
+
+        return False
     return False
 
 
-def expansion_logic():
+def expansion_logic(sun):
     """向日葵种完后的扩展建设逻辑"""
-    sun = reader.get_sunlight()
 
     # 阶段1：种植双发射手在豌豆射手前
     if sun >= 200 and check_plant_CD('双发射手'):
@@ -246,51 +241,91 @@ def expansion_logic():
                             and check_plant_CD('双发射手')):
                         if plant_at(row, target_col, '双发射手'):
                             return True
-
-    # 阶段2：双发射手种完一列后，在前面种坚果
-    # 这里需要您添加检查双发射手列是否完成的逻辑
-
     return False
+
+
+class Selector:
+    def __init__(self, children):
+        self.children = children
+
+    def run(self):
+        for child in self.children:
+            if child.run():
+                return True
+        return False
+
+class Sequence:
+    def __init__(self, children):
+        self.children = children
+
+    def run(self):
+        for child in self.children:
+            if not child.run():
+                return False
+        return True
+
+
+class CheckZombies:
+    def __init__(self, danger_rows, danger_alert):
+
+        self.danger_rows = danger_rows
+        self.danger_alert = danger_alert
+
+    def run(self):
+        if self.danger_alert:
+            if defense_logic(self.danger_rows, self.danger_alert):
+                return True
+        return False
+
+class plant_sunflowers:
+    def __init__(self):
+        self.sunflower_planted_count = 0
+        self.sun_plant_ok = False
+
+    def run(self):
+        if plant_sunflowers_logic():
+            return True
+        return False
+
+
+class extra_plant:
+    def __init__(self, sun):
+        self.sun = sun
+
+    def run(self):
+        if expansion_logic(self.sun):
+            return True
+        return False
 
 
 def game_brain():
     global current_plant_mode, danger_alert
-
-    # 获取游戏状态
     zombie_list = get_zombie_data()
     danger_rows, danger_alert = assess_zombie_threat(zombie_list)
     sun = reader.get_sunlight()
 
-    # 决策优先级
-    if danger_alert:
-        # 优先级1：处理紧急威胁
-        if defense_logic(danger_rows, danger_alert):
-            return
-
-    if not sun_plant_ok:
-        # 优先级2：种植向日葵（如果没有危险或危险已处理）
-        plant_sunflowers_logic()
-    else:
-        # 优先级3：扩展建设
-        expansion_logic()
-
-    # 基础防御：即使没有危险警报，也保持一定防御
-    if not danger_alert and sun >= 100 and check_plant_CD('豌豆射手'):
-        # 检查哪些行有僵尸但还不算危险
-        for zombie in zombie_list:
-            if 600 <= zombie['x'] < 800:  # 中等距离
-                row = zombie['row']
-                if not has_shooter_in_row(row):
-                    # 在该行中间位置种植豌豆射手
-                    for col in range(4, 6):
-                        if (row, col) not in planted_grids:
-                            plant_at(row, col, '豌豆射手')
-                            break
+    tree = Selector([
+        Sequence([
+            CheckZombies(danger_rows, danger_alert)
+        ]),
+        Sequence([
+            plant_sunflowers()
+        ]),
+        Sequence([
+            extra_plant(sun)
+        ])
+    ])
+    tree.run()
 
 
-if __name__ == "__main__":
+is_running = False
+
+
+def game_loop():
+    """游戏主循环"""
+    global is_running
     try:
-        while True:
+        while is_running:
             game_brain()
             zombie_list = get_zombie_data()
             for zombie in zombie_list:
@@ -298,9 +333,31 @@ if __name__ == "__main__":
                       f"数量={zombie['count']}，"
                       f"x 位置={zombie['x']}，y 位置={zombie['row']}")
             print("-" * 25)
-
             time.sleep(1.5)
     except KeyboardInterrupt:
         print("已退出")
     finally:
         reader.close()
+
+
+def toggle_script():
+    """切换脚本运行状态"""
+    global is_running
+    is_running = not is_running
+    if is_running:
+        print("\n[启动] 自动脚本已启动 - 按 F9 暂停")
+        thread = threading.Thread(target=game_loop, daemon=True)
+        thread.start()
+    else:
+        print("\n[暂停] 自动脚本已暂停 - 按 F9 继续")
+
+
+if __name__ == "__main__":
+    print("  F9  - 启动/暂停脚本")
+    print("=" * 50)
+    print("等待按键...")
+
+    keyboard.add_hotkey('f9', toggle_script)
+    keyboard.wait('f10')
+    print("\n[退出] 程序已停止")
+    reader.close()
